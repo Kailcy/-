@@ -18,11 +18,12 @@ fi
 
 #-----------------------------
 # 2. 获取用户配置（仅支持交互式输入）
+# 强制从终端 (/dev/tty) 读取输入，以支持通过管道运行脚本
 #-----------------------------
 echo -e "${GREEN}请提供以下配置信息：${NC}"
-read -p "请输入 163 发件邮箱： " SMTP_EMAIL
-read -p "请输入 163 邮箱授权码： " SMTP_PASS
-read -p "请输入收件邮箱： " RECIPIENT_EMAIL
+read -p "请输入 163 发件邮箱： " SMTP_EMAIL < /dev/tty
+read -p "请输入 163 邮箱授权码： " SMTP_PASS < /dev/tty
+read -p "请输入收件邮箱： " RECIPIENT_EMAIL < /dev/tty
 
 # 简单的空值检查
 if [[ -z "$SMTP_EMAIL" || -z "$SMTP_PASS" || -z "$RECIPIENT_EMAIL" ]]; then
@@ -199,6 +200,7 @@ echo -e "${GREEN}==============================================================$
 echo " 安装完成！"
 echo " 请使用以下方式运行此脚本:"
 echo " 1. 交互式运行 (直接执行): sudo bash $0"
+echo " 2. 管道式运行 (强制交互): wget ... | sudo bash"
 echo ""
 echo " 检查要点："
 echo " 1. 如果没有收到邮件，请检查 /var/log/mail.log"
