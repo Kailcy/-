@@ -159,15 +159,37 @@ HTML_CONTENT+="</table>
 # Write HTML content to file
 echo "\$HTML_CONTENT" > "\$HTML_FILE"
 
-if command -v mail &> /dev/null; then
-    mail -a "Content-Type: text/html" \\
-         -a "From: Server Monitor <\$EMAIL_FROM>" \\
-         -s "Server Traffic Report \$CURRENT_YM" \\
-         -A "\$CSV_FILE" \\
-         "\$EMAIL_TO" < "\$HTML_FILE"
-    echo "邮件发送命令已执行。"
+# ==========================================
+# 关键修正：使用 sendmail 构造标准 MIME 邮件
+# ==========================================
+BOUNDARY="====_Boundary_\$(date +%s)_===="
+
+(
+    echo "From: Server Monitor <\$EMAIL_FROM>"
+    echo "To: \$EMAIL_TO"
+    echo "Subject: Server Traffic Report \$CURRENT_YM"
+    echo "MIME-Version: 1.0"
+    echo "Content-Type: multipart/mixed; boundary=\"\$BOUNDARY\""
+    echo ""
+    echo "--\$BOUNDARY"
+    echo "Content-Type: text/html; charset=utf-8"
+    echo "Content-Disposition: inline"
+    echo ""
+    cat "\$HTML_FILE"
+    echo ""
+    echo "--\$BOUNDARY"
+    echo "Content-Type: text/csv; name=\"traffic_report.csv\""
+    echo "Content-Disposition: attachment; filename=\"traffic_report.csv\""
+    echo ""
+    cat "\$CSV_FILE"
+    echo ""
+    echo "--\$BOUNDARY--"
+) | /usr/sbin/sendmail -t
+
+if [ \$? -eq 0 ]; then
+    echo "邮件发送命令已执行 (Sendmail mode)。"
 else
-    echo "错误：未找到 'mail' 命令。"
+    echo "错误：邮件发送失败。"
 fi
 EOF
 
@@ -201,4 +223,5 @@ echo "安装成功！"
 echo "发件邮箱: $SMTP_EMAIL"
 echo "收件邮箱: $RECIPIENT_EMAIL"
 echo "请检查收件箱（包括垃圾邮件文件夹）确认测试邮件是否到达。"
+echo "如果不显示图片，请点击邮件中的'显示图片'或'信任此发件人'。"
 echo -e "${GREEN}----------------------------------------------------------${NC}"
