@@ -19,8 +19,8 @@ fi
 #-----------------------------
 # 2. 获取用户配置（仅交互式输入）
 #-----------------------------
-read -p "请输入 163 发件邮箱 (例如 xxx@163.com)： " SMTP_EMAIL
-read -p "请输入 163 邮箱授权码： " SMTP_PASS
+read -p "请输入 163 发件邮箱：  " SMTP_EMAIL
+read -p "请输入 163 邮箱授权码：  " SMTP_PASS
 read -p "请输入收件邮箱： " RECIPIENT_EMAIL
 
 # 简单的空值检查
