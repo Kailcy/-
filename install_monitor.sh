@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 每日CSV明细版 ====${NC}"
+echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 每日CSV明细版 (已修复月份逻辑) ====${NC}"
 
 #-----------------------------
 # 1. Root Check
@@ -93,16 +93,16 @@ EMAIL_TO="$RECIPIENT_EMAIL"
 EMAIL_FROM="$SMTP_EMAIL"
 SERVER_NAME="$CUSTOM_SERVER_NAME" 
 
-CURRENT_YM=\$(date +"%Y-%m")
-# 如果今天是 1 号，则生成“上个月”的报告
+# 确定报告的目标月份 (YYYY-MM)
+# 如果今天是 1 号，则生成“上个月”的报告，否则生成“当前月”的报告
 if [ \$(date +%d) -eq 01 ]; then
-    TARGET_DATE=\$(date -d "yesterday" +"%Y-%m")
+    REPORT_MONTH=\$(date -d "yesterday" +"%Y-%m")
 else
-    TARGET_DATE=\$(date +"%Y-%m")
+    REPORT_MONTH=\$(date +"%Y-%m")
 fi
 
-CSV_FILE="\$OUTPUT_DIR/\$CURRENT_YM-traffic.csv"
-HTML_FILE="\$OUTPUT_DIR/\$CURRENT_YM-traffic.html"
+CSV_FILE="\$OUTPUT_DIR/\$REPORT_MONTH-traffic.csv"
+HTML_FILE="\$OUTPUT_DIR/\$REPORT_MONTH-traffic.html"
 
 mkdir -p "\$OUTPUT_DIR"
 # [修改点 1] CSV 表头改为包含日期
@@ -112,7 +112,7 @@ HTML_CONTENT="<!DOCTYPE html>
 <html>
 <head>
 <meta charset='utf-8'>
-<title>\${SERVER_NAME} 流量报告 \$CURRENT_YM</title>
+<title>\${SERVER_NAME} 流量报告 \$REPORT_MONTH</title>
 <style>
 body { font-family: sans-serif; background: #f4f4f4; padding: 20px; }
 .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
@@ -127,13 +127,13 @@ tr:nth-child(even) { background-color: #f9f9f9; }
 </head>
 <body>
 <div class='container'>
-<h2>📊 \${SERVER_NAME} 月度流量报告 (\$CURRENT_YM)</h2>
+<h2>📊 \${SERVER_NAME} 月度流量报告 (\$REPORT_MONTH)</h2>
 <p style='font-size:0.9em; color:#666;'>* 每日明细数据请查看附件 CSV</p>
 <table>
 <tr><th>网卡</th><th>下载</th><th>上传</th><th>总计</th></tr>"
 
 TOTAL_BYTES_SUM=0
-# [修改点 2] 使用 vnstat --json 获取完整数据 (去掉 2 参数以防版本兼容问题，默认 json 包含 days)
+# 使用 vnstat --json 获取完整数据
 JSON_DATA=\$(vnstat --json)
 ifaces=\$(echo "\$JSON_DATA" | jq -r '.interfaces[].name')
 
@@ -142,7 +142,8 @@ if [ -z "\$ifaces" ]; then
 else
     for iface in \$ifaces; do
         # --- HTML 部分：保持显示月度总计 ---
-        month_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$CURRENT_YM" '
+        # 关键修改：使用 REPORT_MONTH 进行过滤
+        month_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$REPORT_MONTH" '
             .interfaces[] | select(.name == \$iface) | .traffic.month[]? | select(.date.year==(\$ym[0:4]|tonumber) and .date.month==(\$ym[5:7]|tonumber))
         ')
         
@@ -164,8 +165,8 @@ else
         fi
 
         # --- CSV 部分：提取每日明细 ---
-        # 提取该月份的所有天数
-        daily_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$CURRENT_YM" '
+        # 关键修改：使用 REPORT_MONTH 进行过滤
+        daily_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$REPORT_MONTH" '
             .interfaces[] | select(.name == \$iface) | .traffic.day[]? |
             select(.date.year==(\$ym[0:4]|tonumber) and .date.month==(\$ym[5:7]|tonumber)) |
             "\(.date.year)-\(.date.month)-\(.date.day) \(.rx) \(.tx)"
@@ -173,7 +174,6 @@ else
 
         while read -r d_date d_rx d_tx; do
              if [[ -n "\$d_date" ]]; then
-                 # 格式化日期，确保是 YYYY-MM-DD (vnstat json输出的月/日可能是单数字，这里简单处理，Excel能识别)
                  # 计算每日 GB
                  d_rx=\${d_rx:-0}
                  d_tx=\${d_tx:-0}
@@ -189,9 +189,6 @@ else
     done
 fi
 
-# 对 CSV 进行简单的排序（按日期），这需要跳过表头
-# (可选优化：目前直接追加也没问题，通常是按日期顺序输出的)
-
 TOTAL_GB_SUM=\$(echo "scale=2; \$TOTAL_BYTES_SUM / 1024 / 1024 / 1024" | bc)
 HTML_CONTENT+="</table>
 <div class='total'>本月总流量：<span style='font-size: 1.5em;'>\$TOTAL_GB_SUM GB</span></div>
@@ -206,7 +203,7 @@ echo "\$HTML_CONTENT" > "\$HTML_FILE"
 # 发送邮件部分 (包含 Base64 标题修复)
 # ==========================================
 BOUNDARY="====_Boundary_\$(date +%s)_===="
-RAW_SUBJECT="📊 \${SERVER_NAME} 月度流量报告 (\$CURRENT_YM)"
+RAW_SUBJECT="📊 \${SERVER_NAME} 月度流量报告 (\$REPORT_MONTH)"
 ENCODED_SUBJECT=\$(echo -n "\$RAW_SUBJECT" | base64 | tr -d '\n')
 
 (
