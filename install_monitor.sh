@@ -19,7 +19,16 @@ fi
 #-----------------------------
 # 2. 获取用户配置
 #-----------------------------
-# 允许环境变量传入，否则交互式输入
+# 允许通过命令行参数传入：
+# 格式：./installer_fixed.sh <发件邮箱> <授权码> <收件邮箱>
+# 优先级：命令行参数 -> 环境变量 -> 交互式输入
+
+# 1. 从命令行参数设置变量
+if [ -n "$1" ]; then SMTP_EMAIL="$1"; fi
+if [ -n "$2" ]; then SMTP_PASS="$2"; fi
+if [ -n "$3" ]; then RECIPIENT_EMAIL="$3"; fi
+
+# 2. 如果变量仍未设置，则进行交互式输入
 if [ -z "$SMTP_EMAIL" ]; then read -p "请输入 163 发件邮箱 (例如 xxx@163.com)： " SMTP_EMAIL; fi
 if [ -z "$SMTP_PASS" ]; then read -p "请输入 163 邮箱授权码： " SMTP_PASS; fi
 if [ -z "$RECIPIENT_EMAIL" ]; then read -p "请输入收件邮箱： " RECIPIENT_EMAIL; fi
@@ -78,7 +87,7 @@ echo -e "${GREEN}[3/6] 生成报告脚本...${NC}"
 REPORT_SCRIPT="/usr/local/bin/vnstat_monthly_report.sh"
 
 # 第一步：只写入变量配置 (避免特殊字符干扰)
-
+cat > "$REPORT_SCRIPT" << EOF
 #!/bin/bash
 # 配置文件
 OUTPUT_DIR="/var/log/vnstat_reports"
