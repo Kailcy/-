@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 自定义名称版 ====${NC}"
+echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 自定义名称001版 ====${NC}"
 
 #-----------------------------
 # 1. Root Check
