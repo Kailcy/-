@@ -12,22 +12,32 @@ echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix
 # 1. Root 检查
 #-----------------------------
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}错误：请使用 root 运行此脚本： sudo bash $0${NC}"
-  exit 1
+  echo -e "${RED}错误：请使用 root 运行此脚本： sudo bash $0${NC}"
+  exit 1
 fi
 
 #-----------------------------
-# 2. 获取用户配置（仅交互式输入）
+# 2. 获取用户配置（仅支持交互式输入）
 #-----------------------------
-read -p "请输入 163 发件邮箱：  " SMTP_EMAIL
-read -p "请输入 163 邮箱授权码：  " SMTP_PASS
+
+echo -e "${GREEN}请提供以下配置信息：${NC}"
+read -p "请输入 163 发件邮箱： " SMTP_EMAIL
+read -p "请输入 163 邮箱授权码： " SMTP_PASS
 read -p "请输入收件邮箱： " RECIPIENT_EMAIL
+
 
 # 简单的空值检查
 if [[ -z "$SMTP_EMAIL" || -z "$SMTP_PASS" || -z "$RECIPIENT_EMAIL" ]]; then
-    echo -e "${RED}错误：邮箱信息不能为空。${NC}"
-    exit 1
+    echo -e "${RED}错误：邮箱信息不能为空。请确保在交互式环境下运行脚本。${NC}"
+    exit 1
 fi
+
+# 打印确认信息
+echo -e "${GREEN}----------------------------------------------------------${NC}"
+echo "发件邮箱 (163): $SMTP_EMAIL"
+echo "收件邮箱: $RECIPIENT_EMAIL"
+echo -e "${GREEN}----------------------------------------------------------${NC}"
+
 
 #-----------------------------
 # 3. 安装依赖
@@ -118,26 +128,26 @@ JSON_DATA=$(vnstat --json)
 ifaces=$(echo "$JSON_DATA" | jq -r '.interfaces[].name')
 
 if [ -z "$ifaces" ]; then
-    HTML_CONTENT+="<tr><td colspan='4'>暂无接口数据，请等待 vnstat 生成数据库。</td></tr>"
+    HTML_CONTENT+="<tr><td colspan='4'>暂无接口数据，请等待 vnstat 生成数据库。</td></tr>"
 else
-    for iface in $ifaces; do
-        payload=$(echo "$JSON_DATA" | jq -r --arg iface "$iface" --arg ym "$CURRENT_YM" '
-            .interfaces[] | select(.name == $iface) | .traffic.month[]? | select(.date.year==($ym[0:4]|tonumber) and .date.month==($ym[5:7]|tonumber))
-        ')
-        if [[ -n "$payload" ]]; then
-            rx_bytes=$(echo "$payload" | jq -r '.rx')
-            tx_bytes=$(echo "$payload" | jq -r '.tx')
-            rx_bytes=${rx_bytes:-0}
-            tx_bytes=${tx_bytes:-0}
-            total_bytes=$(echo "$rx_bytes + $tx_bytes" | bc)
-            TOTAL_BYTES_SUM=$(echo "$TOTAL_BYTES_SUM + $total_bytes" | bc)
-            rx_gb=$(echo "scale=2; $rx_bytes / 1024 / 1024 / 1024" | bc)
-            tx_gb=$(echo "scale=2; $tx_bytes / 1024 / 1024 / 1024" | bc)
-            total_gb=$(echo "scale=2; $total_bytes / 1024 / 1024 / 1024" | bc)
-            echo "$iface,$rx_gb,$tx_gb,$total_gb" >> "$CSV_FILE"
-            HTML_CONTENT+="<tr><td><b>$iface</b></td><td>$rx_gb GB</td><td>$tx_gb GB</td><td>$total_gb GB</td></tr>"
-        fi
-    done
+    for iface in $ifaces; do
+        payload=$(echo "$JSON_DATA" | jq -r --arg iface "$iface" --arg ym "$CURRENT_YM" '
+            .interfaces[] | select(.name == $iface) | .traffic.month[]? | select(.date.year==($ym[0:4]|tonumber) and .date.month==($ym[5:7]|tonumber))
+        ')
+        if [[ -n "$payload" ]]; then
+            rx_bytes=$(echo "$payload" | jq -r '.rx')
+            tx_bytes=$(echo "$payload" | jq -r '.tx')
+            rx_bytes=${rx_bytes:-0}
+            tx_bytes=${tx_bytes:-0}
+            total_bytes=$(echo "$rx_bytes + $tx_bytes" | bc)
+            TOTAL_BYTES_SUM=$(echo "$TOTAL_BYTES_SUM + $total_bytes" | bc)
+            rx_gb=$(echo "scale=2; $rx_bytes / 1024 / 1024 / 1024" | bc)
+            tx_gb=$(echo "scale=2; $tx_bytes / 1024 / 1024 / 1024" | bc)
+            total_gb=$(echo "scale=2; $total_bytes / 1024 / 1024 / 1024" | bc)
+            echo "$iface,$rx_gb,$tx_gb,$total_gb" >> "$CSV_FILE"
+            HTML_CONTENT+="<tr><td><b>$iface</b></td><td>$rx_gb GB</td><td>$tx_gb GB</td><td>$total_gb GB</td></tr>"
+        fi
+    done
 fi
 
 TOTAL_GB_SUM=$(echo "scale=2; $TOTAL_BYTES_SUM / 1024 / 1024 / 1024" | bc)
@@ -148,17 +158,18 @@ HTML_CONTENT+="</table>
 </body>
 </html>"
 
-echo "$HTML_CONTENT" > "$HTML_FILE"
+echo "$HTML_FILE" > "$HTML_FILE"
 
 if command -v mail &> /dev/null; then
-    mail -a "Content-Type: text/html" \
-         -a "From: Server Monitor <$EMAIL_FROM>" \
-         -s "Server Traffic Report $CURRENT_YM" \
-         -A "$CSV_FILE" \
-         "$EMAIL_TO" <<< "$HTML_CONTENT"
-    echo "邮件发送命令已执行。"
+    # 使用mail命令发送HTML邮件并附加CSV文件
+    mail -a "Content-Type: text/html" \
+         -a "From: Server Monitor <$EMAIL_FROM>" \
+         -s "Server Traffic Report $CURRENT_YM" \
+         -A "$CSV_FILE" \
+         "$EMAIL_TO" <<< "$HTML_CONTENT"
+    echo "邮件发送命令已执行。"
 else
-    echo "错误：未找到 'mail' 命令，请检查 mailutils 是否安装。"
+    echo "错误：未找到 'mail' 命令，请检查 mailutils 是否安装。"
 fi
 EOF
 
@@ -170,10 +181,10 @@ chmod +x "$REPORT_SCRIPT"
 echo -e "${GREEN}[4/6] 配置定时任务...${NC}"
 CRON_CMD="$REPORT_SCRIPT"
 if crontab -l 2>/dev/null | grep -q "vnstat_monthly_report"; then
-    echo "定时任务已存在，跳过。"
+    echo "定时任务已存在，跳过。"
 else
-    (crontab -l 2>/dev/null; echo "5 0 1 * * $CRON_CMD") | crontab -
-    echo "定时任务已添加：每月 1 日 00:05 执行"
+    (crontab -l 2>/dev/null; echo "5 0 1 * * $CRON_CMD") | crontab -
+    echo "定时任务已添加：每月 1 日 00:05 执行"
 fi
 
 #-----------------------------
@@ -188,6 +199,10 @@ bash "$REPORT_SCRIPT"
 
 echo -e "${GREEN}==============================================================${NC}"
 echo " 安装完成！"
+echo " 请使用以下方式运行此脚本:"
+echo " 1. 交互式运行 (直接执行): sudo bash $0"
+echo ""
+echo " 检查要点："
 echo " 1. 如果没有收到邮件，请检查 /var/log/mail.log"
 echo " 2. 如果流量显示为 0，是因为 vnStat 刚安装，还未统计到数据。"
 echo " 3. 手动测试命令： bash $REPORT_SCRIPT"
