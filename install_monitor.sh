@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 自定义名称001版 ====${NC}"
+echo -e "${GREEN}==== 网络流量监控系统安装脚本 (vnStat 2.x + Postfix) - 每日CSV明细版 ====${NC}"
 
 #-----------------------------
 # 1. Root Check
@@ -85,7 +85,6 @@ echo -e "${GREEN}[3/6] 生成报告脚本...${NC}"
 REPORT_SCRIPT="/usr/local/bin/vnstat_monthly_report.sh"
 
 # Create the report script
-# 注意：这里将 CUSTOM_SERVER_NAME 写入到生成的脚本中
 cat > "$REPORT_SCRIPT" << EOF
 #!/bin/bash
 # Configuration file
@@ -106,7 +105,8 @@ CSV_FILE="\$OUTPUT_DIR/\$CURRENT_YM-traffic.csv"
 HTML_FILE="\$OUTPUT_DIR/\$CURRENT_YM-traffic.html"
 
 mkdir -p "\$OUTPUT_DIR"
-echo "interface,rx_GB,tx_GB,total_GB" > "\$CSV_FILE"
+# [修改点 1] CSV 表头改为包含日期
+echo "Date,Interface,RX_GB,TX_GB,Total_GB" > "\$CSV_FILE"
 
 HTML_CONTENT="<!DOCTYPE html>
 <html>
@@ -128,41 +128,69 @@ tr:nth-child(even) { background-color: #f9f9f9; }
 <body>
 <div class='container'>
 <h2>📊 \${SERVER_NAME} 月度流量报告 (\$CURRENT_YM)</h2>
+<p style='font-size:0.9em; color:#666;'>* 每日明细数据请查看附件 CSV</p>
 <table>
 <tr><th>网卡</th><th>下载</th><th>上传</th><th>总计</th></tr>"
 
 TOTAL_BYTES_SUM=0
-# Use vnstat --json 2
-JSON_DATA=\$(vnstat --json 2)
+# [修改点 2] 使用 vnstat --json 获取完整数据 (去掉 2 参数以防版本兼容问题，默认 json 包含 days)
+JSON_DATA=\$(vnstat --json)
 ifaces=\$(echo "\$JSON_DATA" | jq -r '.interfaces[].name')
 
 if [ -z "\$ifaces" ]; then
     HTML_CONTENT+="<tr><td colspan='4'>暂无接口数据，请等待 vnstat 生成数据库。</td></tr>"
 else
     for iface in \$ifaces; do
-        payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$CURRENT_YM" '
+        # --- HTML 部分：保持显示月度总计 ---
+        month_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$CURRENT_YM" '
             .interfaces[] | select(.name == \$iface) | .traffic.month[]? | select(.date.year==(\$ym[0:4]|tonumber) and .date.month==(\$ym[5:7]|tonumber))
         ')
         
-        if [[ -n "\$payload" ]]; then
-            rx_bytes=\$(echo "\$payload" | jq -r '.rx')
-            tx_bytes=\$(echo "\$payload" | jq -r '.tx')
-            rx_bytes=\${rx_bytes:-0}
-            tx_bytes=\${tx_bytes:-0}
+        if [[ -n "\$month_payload" ]]; then
+            m_rx=\$(echo "\$month_payload" | jq -r '.rx')
+            m_tx=\$(echo "\$month_payload" | jq -r '.tx')
+            m_rx=\${m_rx:-0}
+            m_tx=\${m_tx:-0}
             
-            total_bytes=\$(echo "\$rx_bytes + \$tx_bytes" | bc)
-            TOTAL_BYTES_SUM=\$(echo "\$TOTAL_BYTES_SUM + \$total_bytes" | bc)
+            m_total=\$(echo "\$m_rx + \$m_tx" | bc)
+            TOTAL_BYTES_SUM=\$(echo "\$TOTAL_BYTES_SUM + \$m_total" | bc)
             
-            # Convert to GB
-            rx_gb=\$(echo "scale=2; \$rx_bytes / 1024 / 1024 / 1024" | bc)
-            tx_gb=\$(echo "scale=2; \$tx_bytes / 1024 / 1024 / 1024" | bc)
-            total_gb=\$(echo "scale=2; \$total_bytes / 1024 / 1024 / 1024" | bc)
+            # Convert to GB for HTML
+            m_rx_gb=\$(echo "scale=2; \$m_rx / 1024 / 1024 / 1024" | bc)
+            m_tx_gb=\$(echo "scale=2; \$m_tx / 1024 / 1024 / 1024" | bc)
+            m_total_gb=\$(echo "scale=2; \$m_total / 1024 / 1024 / 1024" | bc)
             
-            echo "\$iface,\$rx_gb,\$tx_gb,\$total_gb" >> "\$CSV_FILE"
-            HTML_CONTENT+="<tr><td><b>\$iface</b></td><td>\$rx_gb GB</td><td>\$tx_gb GB</td><td>\$total_gb GB</td></tr>"
+            HTML_CONTENT+="<tr><td><b>\$iface</b></td><td>\$m_rx_gb GB</td><td>\$m_tx_gb GB</td><td>\$m_total_gb GB</td></tr>"
         fi
+
+        # --- CSV 部分：提取每日明细 ---
+        # 提取该月份的所有天数
+        daily_payload=\$(echo "\$JSON_DATA" | jq -r --arg iface "\$iface" --arg ym "\$CURRENT_YM" '
+            .interfaces[] | select(.name == \$iface) | .traffic.day[]? |
+            select(.date.year==(\$ym[0:4]|tonumber) and .date.month==(\$ym[5:7]|tonumber)) |
+            "\(.date.year)-\(.date.month)-\(.date.day) \(.rx) \(.tx)"
+        ')
+
+        while read -r d_date d_rx d_tx; do
+             if [[ -n "\$d_date" ]]; then
+                 # 格式化日期，确保是 YYYY-MM-DD (vnstat json输出的月/日可能是单数字，这里简单处理，Excel能识别)
+                 # 计算每日 GB
+                 d_rx=\${d_rx:-0}
+                 d_tx=\${d_tx:-0}
+                 
+                 # 使用 scale=3 保证 CSV 里精度稍高一点
+                 d_rx_gb=\$(echo "scale=3; \$d_rx / 1024 / 1024 / 1024" | bc)
+                 d_tx_gb=\$(echo "scale=3; \$d_tx / 1024 / 1024 / 1024" | bc)
+                 d_total_gb=\$(echo "scale=3; (\$d_rx + \$d_tx) / 1024 / 1024 / 1024" | bc)
+                 
+                 echo "\$d_date,\$iface,\$d_rx_gb,\$d_tx_gb,\$d_total_gb" >> "\$CSV_FILE"
+             fi
+        done <<< "\$daily_payload"
     done
 fi
+
+# 对 CSV 进行简单的排序（按日期），这需要跳过表头
+# (可选优化：目前直接追加也没问题，通常是按日期顺序输出的)
 
 TOTAL_GB_SUM=\$(echo "scale=2; \$TOTAL_BYTES_SUM / 1024 / 1024 / 1024" | bc)
 HTML_CONTENT+="</table>
@@ -175,13 +203,10 @@ HTML_CONTENT+="</table>
 echo "\$HTML_CONTENT" > "\$HTML_FILE"
 
 # ==========================================
-# 发送邮件部分
+# 发送邮件部分 (包含 Base64 标题修复)
 # ==========================================
 BOUNDARY="====_Boundary_\$(date +%s)_===="
 RAW_SUBJECT="📊 \${SERVER_NAME} 月度流量报告 (\$CURRENT_YM)"
-
-# 修复关键点：对标题进行 Base64 编码 (RFC 2047)
-# 否则中文和 Emoji 会导致邮件被 163 服务器拒收
 ENCODED_SUBJECT=\$(echo -n "\$RAW_SUBJECT" | base64 | tr -d '\n')
 
 (
@@ -198,8 +223,8 @@ ENCODED_SUBJECT=\$(echo -n "\$RAW_SUBJECT" | base64 | tr -d '\n')
     cat "\$HTML_FILE"
     echo ""
     echo "--\$BOUNDARY"
-    echo "Content-Type: text/csv; name=\"traffic_report.csv\""
-    echo "Content-Disposition: attachment; filename=\"traffic_report.csv\""
+    echo "Content-Type: text/csv; name=\"traffic_daily_report.csv\""
+    echo "Content-Disposition: attachment; filename=\"traffic_daily_report.csv\""
     echo ""
     cat "\$CSV_FILE"
     echo ""
@@ -244,4 +269,5 @@ echo "安装成功！"
 echo "服务器名称: $CUSTOM_SERVER_NAME"
 echo "发件邮箱: $SMTP_EMAIL"
 echo "收件邮箱: $RECIPIENT_EMAIL"
+echo "请检查收件箱：邮件正文为本月总计，附件CSV包含了每天的流量详情。"
 echo -e "${GREEN}----------------------------------------------------------${NC}"
